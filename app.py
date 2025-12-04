@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import yfinance as yf
 import statsmodels.api as sm
+import time
+from functools import wraps
 
 # Page configuration
 st.set_page_config(page_title="DCF Valuation System", page_icon="💼", layout="wide")
@@ -14,6 +16,29 @@ pd.set_option('display.float_format', lambda x: '{:,.2f}'.format(x))
 sns.set_style("whitegrid")
 
 # ==================== HELPER FUNCTIONS ====================
+
+# Retry decorator for handling rate limits
+def retry_with_backoff(max_retries=3, initial_delay=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            for attempt in range(max_retries):
+                try:
+                    time.sleep(delay * attempt)  # Exponential backoff
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "rate" in error_msg or "429" in error_msg or "too many" in error_msg:
+                        if attempt < max_retries - 1:
+                            wait_time = delay * (attempt + 1)
+                            st.warning(f"Rate limited. Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
+                    raise e
+            return None
+        return wrapper
+    return decorator
 
 # WACC Calculator Functions
 credit_spreads = [
@@ -41,19 +66,28 @@ def get_credit_spread(rating, credit_spreads):
     st.warning(f"Warning: Rating '{rating}' not found in credit spread table.")
     return float('nan')
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+@retry_with_backoff(max_retries=3, initial_delay=2)
 def get_stock_data(ticker_symbol, index_symbol, period='5y', interval='1mo'):
     try:
+        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
         stock_data = yf.download(ticker_symbol, period=period, interval=interval, progress=False)
+        time.sleep(0.5)  # Delay between requests
         index_data = yf.download(index_symbol, period=period, interval=interval, progress=False)
         return stock_data, index_data
     except Exception as e:
-        st.error(f"Error downloading data: {e}")
+        error_msg = str(e)
+        if "rate" in error_msg.lower() or "429" in error_msg or "too many" in error_msg.lower():
+            st.error("⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and try again.")
+        else:
+            st.error(f"Error downloading data: {e}")
         return None, None
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+@retry_with_backoff(max_retries=3, initial_delay=2)
 def get_company_info(ticker_symbol):
     try:
+        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
         return {
@@ -62,7 +96,11 @@ def get_company_info(ticker_symbol):
             'total_debt': info.get('totalDebt', 0)
         }
     except Exception as e:
-        st.error(f"Error getting company info: {e}")
+        error_msg = str(e)
+        if "rate" in error_msg.lower() or "429" in error_msg or "too many" in error_msg.lower():
+            st.error("⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and try again, or try a different ticker.")
+        else:
+            st.error(f"Error getting company info: {e}")
         return None
 
 def calculate_wacc(ticker_symbol, index_symbol, rf, emrp, firm_rating, marg_tax_rate, scale_factor):
@@ -127,9 +165,11 @@ def calculate_wacc(ticker_symbol, index_symbol, rf, emrp, firm_rating, marg_tax_
     }
 
 # Historical Analysis Functions
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+@retry_with_backoff(max_retries=3, initial_delay=2)
 def get_financial_data(ticker_symbol):
     try:
+        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
         ticker = yf.Ticker(ticker_symbol)
         income_stmt = ticker.financials.T.sort_index().iloc[-4:]
         balance_sheet = ticker.balance_sheet.T.sort_index().iloc[-4:]
@@ -138,7 +178,11 @@ def get_financial_data(ticker_symbol):
         company_name = info.get('longName', ticker_symbol)
         return income_stmt, balance_sheet, cash_flow, company_name
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        error_msg = str(e)
+        if "rate" in error_msg.lower() or "429" in error_msg or "too many" in error_msg.lower():
+            st.error("⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and try again.")
+        else:
+            st.error(f"Error fetching data: {e}")
         return None, None, None, None
 
 def calculate_historical_metrics(income_stmt, balance_sheet, cash_flow, eff_tax_rate, scale_factor):
@@ -598,7 +642,8 @@ with tab4:
         if st.button("Run DCF Model", type="primary", key="dcf_run_btn"):
             with st.spinner("Running DCF valuation..."):
                 try:
-                    # Get company data
+                    # Get company data with delay to avoid rate limiting
+                    time.sleep(0.5)
                     ticker = yf.Ticker(ticker_symbol_dcf)
                     shares_outstanding = ticker.info.get('sharesOutstanding', 0)
                     total_debt = ticker.info.get('totalDebt', 0)
@@ -680,7 +725,11 @@ with tab4:
                     st.session_state['stored_dcf_stock_prices'] = stock_prices
 
                 except Exception as e:
-                    st.error(f"Error running DCF model: {e}")
+                    error_msg = str(e)
+                    if "rate" in error_msg.lower() or "429" in error_msg or "too many" in error_msg.lower():
+                        st.error("⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and try again.")
+                    else:
+                        st.error(f"Error running DCF model: {e}")
 
     # Display DCF results
     if 'stored_dcf_results' in st.session_state:
