@@ -7,9 +7,22 @@ import yfinance as yf
 import statsmodels.api as sm
 import time
 from functools import wraps
+import requests
 
 # Page configuration
 st.set_page_config(page_title="DCF Valuation System", page_icon="💼", layout="wide")
+
+# Configure yfinance to use custom headers (helps avoid rate limiting)
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1'
+})
 
 # Format setting
 pd.set_option('display.float_format', lambda x: '{:,.2f}'.format(x))
@@ -70,9 +83,9 @@ def get_credit_spread(rating, credit_spreads):
 @retry_with_backoff(max_retries=3, initial_delay=2)
 def get_stock_data(ticker_symbol, index_symbol, period='5y', interval='1mo'):
     try:
-        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
+        time.sleep(1.0)  # Increased delay to avoid rate limits
         stock_data = yf.download(ticker_symbol, period=period, interval=interval, progress=False)
-        time.sleep(0.5)  # Delay between requests
+        time.sleep(1.0)  # Increased delay between requests
         index_data = yf.download(index_symbol, period=period, interval=interval, progress=False)
         return stock_data, index_data
     except Exception as e:
@@ -87,8 +100,8 @@ def get_stock_data(ticker_symbol, index_symbol, period='5y', interval='1mo'):
 @retry_with_backoff(max_retries=3, initial_delay=2)
 def get_company_info(ticker_symbol):
     try:
-        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
-        ticker = yf.Ticker(ticker_symbol)
+        time.sleep(1.0)  # Increased delay to avoid rate limits
+        ticker = yf.Ticker(ticker_symbol, session=session)
         info = ticker.info
         return {
             'name': info.get('longName', ticker_symbol),
@@ -169,8 +182,8 @@ def calculate_wacc(ticker_symbol, index_symbol, rf, emrp, firm_rating, marg_tax_
 @retry_with_backoff(max_retries=3, initial_delay=2)
 def get_financial_data(ticker_symbol):
     try:
-        time.sleep(0.5)  # Small delay to avoid rapid-fire requests
-        ticker = yf.Ticker(ticker_symbol)
+        time.sleep(1.0)  # Increased delay to avoid rate limits
+        ticker = yf.Ticker(ticker_symbol, session=session)
         income_stmt = ticker.financials.T.sort_index().iloc[-4:]
         balance_sheet = ticker.balance_sheet.T.sort_index().iloc[-4:]
         cash_flow = ticker.cashflow.T.sort_index().iloc[-4:]
@@ -643,8 +656,8 @@ with tab4:
             with st.spinner("Running DCF valuation..."):
                 try:
                     # Get company data with delay to avoid rate limiting
-                    time.sleep(0.5)
-                    ticker = yf.Ticker(ticker_symbol_dcf)
+                    time.sleep(1.0)
+                    ticker = yf.Ticker(ticker_symbol_dcf, session=session)
                     shares_outstanding = ticker.info.get('sharesOutstanding', 0)
                     total_debt = ticker.info.get('totalDebt', 0)
                     total_cash = ticker.info.get('totalCash', 0)
